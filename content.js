@@ -114,7 +114,8 @@ async function handleScreenshotComparison(tabId) {
     
     // If there are significant changes, highlight them
     if (mismatchPercentage > 1) {
-      highlightChanges(comparison, severity);
+      // Perform grid-based comparison and highlighting
+      await highlightChangesWithGrid(oldScreenshot, newScreenshot, severity, mismatchPercentage);
       
       // Show alert to user
       showAlert(message, status);
@@ -132,18 +133,113 @@ async function handleScreenshotComparison(tabId) {
   }
 }
 
-// Function to highlight changes on the page
-function highlightChanges(comparison, severity) {
-  console.log(`🎨 Highlighting changes with severity: ${severity}`);
+// Grid configuration
+const GRID_SIZE = 15; // 15x15 grid = 225 squares
+const CELL_MISMATCH_THRESHOLD = 5; // Minimum % difference to highlight a cell
+
+// Helper function to load image from data URL
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+// Compare a single grid cell
+async function compareGridCell(oldCellData, newCellData, x, y, width, height, severity) {
+  return new Promise((resolve) => {
+    if (typeof resemble === 'undefined') {
+      resolve(false);
+      return;
+    }
+    
+    resemble(oldCellData)
+      .compareTo(newCellData)
+      .ignoreAntialiasing()
+      .ignoreColors(false)
+      .onComplete((data) => {
+        const cellMismatch = typeof data.rawMisMatchPercentage !== 'undefined' 
+          ? data.rawMisMatchPercentage 
+          : parseFloat(data.misMatchPercentage) || 0;
+        
+        // If this cell has significant changes, highlight it
+        if (cellMismatch > CELL_MISMATCH_THRESHOLD) {
+          drawChangeRectangle(x, y, width, height, severity);
+          resolve(true);
+        } else {
+          resolve(false);
+        }
+      });
+  });
+}
+
+// Function to highlight changes using grid-based approach
+async function highlightChangesWithGrid(oldScreenshot, newScreenshot, severity, overallMismatch) {
+  console.log(`🎨 Starting grid-based highlighting (${GRID_SIZE}x${GRID_SIZE} grid)...`);
   
   // Clear existing highlights
   clearHighlights();
   
-  // Create overlay
-  const overlay = createOverlay();
+  // Get viewport dimensions
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
   
-  // For now, we'll use a simple approach: show a warning banner
-  // In the next phase, we can implement grid-based highlighting
+  const cellWidth = viewportWidth / GRID_SIZE;
+  const cellHeight = viewportHeight / GRID_SIZE;
+  
+  console.log(`📐 Viewport: ${viewportWidth}x${viewportHeight}, Cell size: ${cellWidth.toFixed(1)}x${cellHeight.toFixed(1)}`);
+  
+  // Create images from data URLs
+  const oldImg = await loadImage(oldScreenshot);
+  const newImg = await loadImage(newScreenshot);
+  
+  // Calculate cell dimensions in image space
+  const cellImgWidth = Math.floor(oldImg.width / GRID_SIZE);
+  const cellImgHeight = Math.floor(oldImg.height / GRID_SIZE);
+  
+  // Create canvas for extracting grid cells (size it to cell dimensions)
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = cellImgWidth;
+  canvas.height = cellImgHeight;
+  
+  let changedCells = 0;
+  const comparisonPromises = [];
+  
+  // Compare each grid cell
+  for (let row = 0; row < GRID_SIZE; row++) {
+    for (let col = 0; col < GRID_SIZE; col++) {
+      const imgX = Math.floor((col / GRID_SIZE) * oldImg.width);
+      const imgY = Math.floor((row / GRID_SIZE) * oldImg.height);
+      
+      // Extract cell from old screenshot
+      ctx.clearRect(0, 0, cellImgWidth, cellImgHeight);
+      ctx.drawImage(oldImg, imgX, imgY, cellImgWidth, cellImgHeight, 0, 0, cellImgWidth, cellImgHeight);
+      const oldCellData = canvas.toDataURL('image/png');
+      
+      // Extract cell from new screenshot
+      ctx.clearRect(0, 0, cellImgWidth, cellImgHeight);
+      ctx.drawImage(newImg, imgX, imgY, cellImgWidth, cellImgHeight, 0, 0, cellImgWidth, cellImgHeight);
+      const newCellData = canvas.toDataURL('image/png');
+      
+      // Compare this cell
+      const cellPromise = compareGridCell(oldCellData, newCellData, col * cellWidth, row * cellHeight, cellWidth, cellHeight, severity)
+        .then(changed => {
+          if (changed) changedCells++;
+        });
+      
+      comparisonPromises.push(cellPromise);
+    }
+  }
+  
+  // Wait for all comparisons to complete
+  await Promise.all(comparisonPromises);
+  
+  console.log(`✅ Grid comparison complete: ${changedCells}/${GRID_SIZE * GRID_SIZE} cells changed`);
+  
+  // Show warning banner
   const banner = document.createElement('div');
   banner.id = 'tabnabbing-warning-banner';
   
