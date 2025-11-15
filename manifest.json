@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Anti-Tabnabbing Detector",
+  "version": "1.0.0",
+  "description": "Detects and alerts users about potential tabnabbing attacks by monitoring tab changes",
+  "permissions": [
+    "tabs",
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["resemble.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
+
